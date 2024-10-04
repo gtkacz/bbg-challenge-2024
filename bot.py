@@ -133,9 +133,6 @@ class TradingBot:
     def generate_signals(self, symbol: str):
         df = self.data[symbol]
         signals = []
-        fib_retracement_levels = self.parameters.get("fibonacci", {}).get(
-            "retracement_levels", [0.236, 0.382, 0.5, 0.618, 0.786]
-        )
 
         for i in range(1, len(df)):
             signal = {}
@@ -159,17 +156,6 @@ class TradingBot:
                 signal["Price"] = current["Close"]
             elif current.get("Trend_Breakout_Down", False):
                 signal["Action"] = "Sell (Breakout Down)"
-                signal["Price"] = current["Close"]
-
-            fib_levels = [
-                current.get(f"Fib_{int(level*100)}") for level in fib_retracement_levels
-            ]
-            if any(
-                abs(current["Close"] - fib_level) / fib_level < 0.005
-                for fib_level in fib_levels
-                if pd.notnull(fib_level)
-            ):
-                signal["Action"] = "Buy (Fib Retracement)"
                 signal["Price"] = current["Close"]
 
             if signal and current.name.date() == pd.Timestamp.now(tz="UTC").date():
