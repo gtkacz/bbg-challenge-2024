@@ -1,16 +1,22 @@
-import time
-import tomllib
+import smtplib
 from datetime import datetime, timedelta, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import Sequence
+from warnings import filterwarnings
 
 import numpy as np
 import pandas as pd
-import schedule
+import tomllib
 import yfinance as yf
+from loguru import logger
+from tqdm import tqdm
 
 
 class TradingBot:
     def __init__(self, symbols: Sequence[str], interval: str = "15m") -> None:
+        filterwarnings("ignore")
+
         with open("parameters.toml", "r") as f:
             self.parameters = tomllib.loads(f.read())
 
@@ -35,19 +41,22 @@ class TradingBot:
             int(np.ceil((max_lookback + 50) / periods_per_day)) + 1
         )  # Adding extra periods and a buffer day
 
-        start_date = datetime.now(timezone.utc) - timedelta(days=days_needed)
-        end_date = datetime.now(timezone.utc)
+        self.start_date = datetime.now(timezone.utc) - timedelta(days=days_needed)
+        self.end_date = datetime.now(timezone.utc)
 
         self.data = {}
-        for symbol in symbols:
+
+    def download_data(self):
+        for symbol in tqdm(self.symbols, desc="Downloading data..."):
             df = yf.download(
                 symbol,
-                start=start_date,
-                end=end_date,
-                interval=interval,
+                start=self.start_date,
+                end=self.end_date,
+                interval=self.interval,
                 prepost=False,
                 auto_adjust=True,
                 progress=False,
+                repair=True,
             )
             df.dropna(inplace=True)
             self.data[symbol] = df
@@ -72,8 +81,6 @@ class TradingBot:
 
         self.identify_support_resistance(symbol)
 
-        self.detect_fibonacci_retracements(symbol)
-
         self.detect_trend_breakouts(symbol)
 
     def calculate_rsi(self, series: pd.Series, period: int):
@@ -92,25 +99,6 @@ class TradingBot:
         df = self.data[symbol]
         df["Support"] = df["Low"].rolling(window=20).min()
         df["Resistance"] = df["High"].rolling(window=20).max()
-
-    def detect_fibonacci_retracements(self, symbol: str):
-        df = self.data[symbol]
-        lookback = self.parameters.get("lookback", 20)
-        fibonacci_levels = self.parameters.get("fibonacci", {}).get(
-            "levels", [0.236, 0.382, 0.5, 0.618, 0.786]
-        )
-
-        for level in fibonacci_levels:
-            df[f"Fib_{int(level*100)}"] = np.nan
-
-        for i in range(lookback, len(df)):
-            window = df.iloc[i - lookback : i]
-            max_price = window["High"].max()
-            min_price = window["Low"].min()
-            diff = max_price - min_price
-            for level in fibonacci_levels:
-                fib_level = max_price - level * diff
-                df.at[df.index[i], f"Fib_{int(level*100)}"] = fib_level
 
     def detect_trend_breakouts(self, symbol: str):
         df = self.data[symbol]
@@ -158,38 +146,65 @@ class TradingBot:
                 signal["Action"] = "Sell (Breakout Down)"
                 signal["Price"] = current["Close"]
 
-            if signal and current.name.date() == pd.Timestamp.now(tz="UTC").date():
+            if signal:
                 timestamp = current.name.tz_localize("UTC").tz_convert(
                     "America/Sao_Paulo"
                 )
-                signal["Date"] = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                signals.append(signal)
+                current_time = pd.Timestamp.now(tz="America/Sao_Paulo")
+                time_difference = current_time - timestamp
+
+                if time_difference <= pd.Timedelta(minutes=30):
+                    signal["Date"] = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                    signals.append(signal)
 
         return signals
 
+    def dispatch(self, content: Sequence[str]):
+        recipients = self.parameters["dispatcher"]["recipients"]
+
+        smtp_server = "smtp.gmail.com"
+        smtp_port = 587
+        smtp_username = self.parameters["dispatcher"]["sender"]
+        smtp_password = self.parameters["dispatcher"]["password"]
+
+        sender_email = self.parameters["dispatcher"]["sender"]
+        subject = f"BBG Challenge 2024 Signals {datetime.now()}"
+
+        message_body = "\n".join(content)
+
+        msg = MIMEMultipart()
+        msg["From"] = sender_email
+        msg["To"] = ", ".join(recipients)
+        msg["Subject"] = subject
+
+        msg.attach(MIMEText(message_body, "plain"))
+
+        try:
+            server = smtplib.SMTP(smtp_server, smtp_port)
+            server.starttls()
+            server.login(smtp_username, smtp_password)
+            server.sendmail(sender_email, recipients, msg.as_string())
+            server.quit()
+            print("Email sent successfully.")
+        except Exception as e:
+            print("Failed to send email:", str(e))
+
     def execute(self):
-        for symbol in self.symbols:
+        self.download_data()
+        all_signals = []
+
+        for symbol in tqdm(self.symbols, desc="Calculating Indicators..."):
             self.calculate_indicators(symbol)
             signals = self.generate_signals(symbol)
             for signal in signals:
-                print(
-                    f"Timestamp: {signal['Date']}, Symbol: {symbol}, Action: {signal['Action']}, Price: {signal['Price']}\n{f'Stop Loss set at: {signal['Stop_Loss']}' if 'Stop_Loss' in signal else ''}\n"
-                )
+                out = f"Timestamp: {signal['Date']}, Symbol: {symbol}, Action: {signal['Action']}, Price: {signal['Price']}\n"
+                if "Stop_Loss" in signal:
+                    out += f'Stop Loss set at: {signal["Stop_Loss"]} \n'
 
-    def run(self):
-        def job():
-            current_time = datetime.now()
-            print(f"Running at {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-            self.execute()
+                logger.info(out)
+                print(out)
+                all_signals.append(out)
 
-        current_time = datetime.now()
-        minutes_to_next = 15 - (current_time.minute % 15)
-        next_run = current_time + timedelta(minutes=minutes_to_next)
-
-        schedule.every().day.at(next_run.strftime("%H:%M")).do(job)
-
-        schedule.every(15).minutes.do(job)
-
-        while True:
-            schedule.run_pending()
-            time.sleep(1)
+        if all_signals:
+            all_signals.sort(key=lambda x: x.split(",")[0])
+            self.dispatch(all_signals)

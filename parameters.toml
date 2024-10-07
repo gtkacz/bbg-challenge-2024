@@ -3,3 +3,15 @@ lookback = 20
 [fibonacci]
 levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
 retracement_levels = [0.382, 0.5, 0.618]
+
+[dispatcher]
+sender = "bbgchallenge55@gmail.com"
+password = "xttovfyprtgwtnbo"
+recipients = [
+    "runnermustang357@gmail.com",
+    "jp.fsm2003@gmail.com",
+    "nicolas.dona@icloud.com",
+    "davi.dearaujojr@gmail.com",
+    "ravelmaryse@gmail.com",
+    "gmtkacz@proton.me",
+]
