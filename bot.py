@@ -153,7 +153,7 @@ class TradingBot:
                 current_time = pd.Timestamp.now(tz="America/Sao_Paulo")
                 time_difference = current_time - timestamp
 
-                if time_difference <= pd.Timedelta(minutes=30):
+                if time_difference <= pd.Timedelta(minutes=120):
                     signal["Date"] = timestamp.strftime("%Y-%m-%d %H:%M:%S")
                     signals.append(signal)
 
