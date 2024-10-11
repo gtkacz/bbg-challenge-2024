@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 
 class TradingBot:
-    def __init__(self, symbols: Sequence[str], interval: str = "15m") -> None:
+    def __init__(self, symbols: Sequence[str], interval: str = "1h") -> None:
         filterwarnings("ignore")
 
         with open("parameters.toml", "r") as f:
@@ -25,14 +25,13 @@ class TradingBot:
 
         # Determine the maximum lookback needed for indicators
         max_lookback = max(
-            200,  # For EMA_200
             self.parameters.get("lookback", 20),  # For trend breakout and Fibonacci
             20,  # For Bollinger Bands
             14,  # For RSI_14
         )
 
         # Calculate the number of periods per day based on interval
-        interval_minutes = int(interval.strip("m"))
+        interval_minutes = int(interval.strip("m").strip("h"))
         trading_minutes_per_day = 6.5 * 60  # US market open for 6.5 hours per day
         periods_per_day = int(trading_minutes_per_day / interval_minutes)
 
@@ -67,7 +66,6 @@ class TradingBot:
         df["EMA_9"] = df["Close"].ewm(span=9, adjust=False).mean()
         df["EMA_12"] = df["Close"].ewm(span=12, adjust=False).mean()
         df["EMA_26"] = df["Close"].ewm(span=26, adjust=False).mean()
-        df["EMA_200"] = df["Close"].ewm(span=200, adjust=False).mean()
 
         df["MACD"] = df["EMA_12"] - df["EMA_26"]
         df["Signal_Line"] = df["MACD"].ewm(span=9, adjust=False).mean()
@@ -147,9 +145,12 @@ class TradingBot:
                 signal["Price"] = current["Close"]
 
             if signal:
-                timestamp = current.name.tz_localize("UTC").tz_convert(
-                    "America/Sao_Paulo"
-                )
+                try:
+                    timestamp = current.name.tz_localize("UTC").tz_convert(
+                        "America/Sao_Paulo"
+                    )
+                except TypeError:
+                    timestamp = current.name.tz_convert("America/Sao_Paulo")
                 current_time = pd.Timestamp.now(tz="America/Sao_Paulo")
                 time_difference = current_time - timestamp
 
